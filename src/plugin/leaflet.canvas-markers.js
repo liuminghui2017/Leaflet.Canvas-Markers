@@ -1,3 +1,7 @@
+/**
+ * 使用了https://github.com/corg/Leaflet.Canvas-Markers/branches 的animate-zoom分支；
+ * 1. 增强，根据分辨率调整canvas的绘图width、height，以解决图标模糊问题.
+ */
 'use strict';
 
 function layerFactory(L) {
@@ -129,6 +133,10 @@ function layerFactory(L) {
 
             map.on('click', this._executeListeners, this);
             map.on('mousemove', this._executeListeners, this);
+
+            if (map._zoomAnimated) {
+                map.on('zoomanim', this._animateZoom, this);
+            }
         },
 
         onRemove: function (map) {
@@ -141,6 +149,10 @@ function layerFactory(L) {
 
             map.off('moveend', this._reset, this);
             map.off('resize',this._reset,this);
+
+            if (map._zoomAnimated) {
+                map.off('zoomanim', this._animateZoom, this);
+            }
         },
 
         addTo: function (map) {
@@ -154,6 +166,13 @@ function layerFactory(L) {
             this._latlngMarkers = null;
             this._markers = null;
             this._redraw(true);
+        },
+
+        _animateZoom: function(event) {
+            var scale = this._map.getZoomScale(event.zoom);
+            var offset = this._map._latLngBoundsToNewLayerBounds(this._map.getBounds(), event.zoom, event.center).min;
+
+            L.DomUtil.setTransform(this._canvas, offset, scale);
         },
 
         _addMarker: function(marker,latlng,isDisplaying) {
@@ -176,6 +195,9 @@ function layerFactory(L) {
 
             var pointPos = self._map.latLngToContainerPoint(latlng);
             var iconSize = marker.options.icon.options.iconSize;
+
+            pointPos.x *=  devicePixelRatio
+            pointPos.y *=  devicePixelRatio
 
             var adj_x = iconSize[0]/2;
             var adj_y = iconSize[1]/2;
@@ -210,6 +232,8 @@ function layerFactory(L) {
             if (!pointPos) {
 
                 pointPos = self._map.latLngToContainerPoint(marker.getLatLng());
+                pointPos.x *=  devicePixelRatio
+                pointPos.y *=  devicePixelRatio
             }
 
             var iconUrl = marker.options.icon.options.iconUrl;
@@ -262,8 +286,8 @@ function layerFactory(L) {
                 marker.canvas_img,
                 pointPos.x - options.iconAnchor[0],
                 pointPos.y - options.iconAnchor[1],
-                options.iconSize[0],
-                options.iconSize[1]
+                options.iconSize[0] * devicePixelRatio,
+                options.iconSize[1] * devicePixelRatio
             );
         },
 
@@ -274,8 +298,8 @@ function layerFactory(L) {
 
             var size = this._map.getSize();
 
-            this._canvas.width = size.x;
-            this._canvas.height = size.y;
+            this._canvas.width = size.x * devicePixelRatio;
+            this._canvas.height = size.y * devicePixelRatio;
 
             this._redraw();
         },
@@ -319,6 +343,8 @@ function layerFactory(L) {
 
                 //Readjust Point Map
                 var pointPos = self._map.latLngToContainerPoint(e.data.getLatLng());
+                pointPos.x *=  devicePixelRatio
+                pointPos.y *=  devicePixelRatio
 
                 var iconSize = e.data.options.icon.options.iconSize;
                 var adj_x = iconSize[0]/2;
@@ -350,8 +376,9 @@ function layerFactory(L) {
             this._canvas.style[originProp] = '50% 50%';
 
             var size = this._map.getSize();
-            this._canvas.width = size.x;
-            this._canvas.height = size.y;
+            this._canvas.style = "height:" + size.y + "px;width:" + size.x + "px;";
+            this._canvas.width = size.x * devicePixelRatio;
+            this._canvas.height = size.y * devicePixelRatio;
 
             this._context = this._canvas.getContext('2d');
 
