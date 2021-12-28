@@ -3,9 +3,9 @@ Leaflet plugin for displaying markers on canvas instead of DOM. Working with Lea
 Feel free to contribute
 
 # 更新
- 1.在未合并的animate-zoom分支的基础上，修复图片模糊问题;
- 2. 增强，可为图标增加一个hover图片;
- 3. 重写事件，解决原来此插件会遮挡leaflet的多边形图层问题
+- 在未合并的animate-zoom分支的基础上，修复图片模糊问题;
+- 增强，可为图标增加一个hover图片;
+- 重写事件，解决原来此插件会遮挡leaflet的多边形图层问题;
 ## Demo
 
 There's a [demo](http://eJuke.github.io/Leaflet.Canvas-Markers/examples/index.html) for 10000 points, running on Canvas
