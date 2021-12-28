@@ -1,6 +1,8 @@
 /**
  * 使用了https://github.com/corg/Leaflet.Canvas-Markers/branches 的animate-zoom分支；
- * 1. 增强，根据分辨率调整canvas的绘图width、height，以解决图标模糊问题.
+ * 1. 增强，根据分辨率调整canvas的绘图width、height，以解决图标模糊问题;
+ * 2. 增强，可为图标增加一个hover图片;
+ * 3. 重写事件，解决原来此插件会遮挡leaflet的多边形图层问题
  */
 'use strict';
 
@@ -14,6 +16,7 @@ function layerFactory(L) {
             L.setOptions(this, options);
             this._onClickListeners = [];
             this._onHoverListeners = [];
+            this._onMouseOutListeners = [];
         },
 
         setOptions: function (options) {
@@ -23,7 +26,6 @@ function layerFactory(L) {
         },
 
         redraw: function () {
-
             this._redraw(true);
         },
 
@@ -131,8 +133,9 @@ function layerFactory(L) {
             map.on('moveend', this._reset, this);
             map.on('resize',this._reset,this);
 
-            map.on('click', this._executeListeners, this);
-            map.on('mousemove', this._executeListeners, this);
+            L.DomEvent.on(this._canvas, 'mousemove', this._onMouseMove, this);
+            L.DomEvent.on(this._canvas, 'click dblclick mousedown mouseup contextmenu', this._onClick, this);
+            L.DomEvent.on(this._canvas, 'mouseout', this._handleMouseOut, this);
 
             if (map._zoomAnimated) {
                 map.on('zoomanim', this._animateZoom, this);
@@ -144,9 +147,7 @@ function layerFactory(L) {
             if (this.options.pane) this.getPane().removeChild(this._canvas);
             else map.getPanes().overlayPane.removeChild(this._canvas);
 
-            map.off('click', this._executeListeners, this);
-            map.off('mousemove', this._executeListeners, this);
-
+            L.DomEvent.off(this._canvas);
             map.off('moveend', this._reset, this);
             map.off('resize',this._reset,this);
 
@@ -165,6 +166,7 @@ function layerFactory(L) {
 
             this._latlngMarkers = null;
             this._markers = null;
+            
             this._redraw(true);
         },
 
@@ -199,8 +201,8 @@ function layerFactory(L) {
             pointPos.x *=  devicePixelRatio
             pointPos.y *=  devicePixelRatio
 
-            var adj_x = iconSize[0]/2;
-            var adj_y = iconSize[1]/2;
+            var adj_x = iconSize[0]/2 * devicePixelRatio;
+            var adj_y = iconSize[1]/2 * devicePixelRatio;
             var ret = [({
                 minX: (pointPos.x - adj_x),
                 minY: (pointPos.y - adj_y),
@@ -230,22 +232,20 @@ function layerFactory(L) {
 
             if (!this._imageLookup) this._imageLookup = {};
             if (!pointPos) {
-
                 pointPos = self._map.latLngToContainerPoint(marker.getLatLng());
-                pointPos.x *=  devicePixelRatio
-                pointPos.y *=  devicePixelRatio
+                pointPos.x *=  devicePixelRatio;
+                pointPos.y *=  devicePixelRatio;
             }
 
             var iconUrl = marker.options.icon.options.iconUrl;
+            var iconBgUrl = marker.options.icon.options.iconBgUrl;
 
             if (marker.canvas_img) {
-
                 self._drawImage(marker, pointPos);
             }
             else {
 
                 if(self._imageLookup[iconUrl]) {
-
                     marker.canvas_img = self._imageLookup[iconUrl][0];
 
                     if (self._imageLookup[iconUrl][1] ===false) {
@@ -276,6 +276,22 @@ function layerFactory(L) {
                     }
                 }
             }
+
+            // extend
+            if (iconBgUrl && !marker.canvas_bg_img) {
+                if (self._imageLookup[iconBgUrl]) {
+                    marker.canvas_bg_img = self._imageLookup[iconBgUrl][0]
+                } else {
+                    var bg = new Image();
+                    bg.src = iconBgUrl;
+                    marker.canvas_bg_img = bg;
+                    self._imageLookup[iconBgUrl] = [bg, false];
+
+                    bg.onload = function() {
+                        self._imageLookup[iconBgUrl][1] = true;
+                    }
+                }
+            }
         },
 
         _drawImage: function (marker, pointPos) {
@@ -284,10 +300,23 @@ function layerFactory(L) {
 
             this._context.drawImage(
                 marker.canvas_img,
-                pointPos.x - options.iconAnchor[0],
-                pointPos.y - options.iconAnchor[1],
+                pointPos.x - options.iconAnchor[0] * devicePixelRatio,
+                pointPos.y - options.iconAnchor[1] * devicePixelRatio,
                 options.iconSize[0] * devicePixelRatio,
                 options.iconSize[1] * devicePixelRatio
+            );
+        },
+
+        _drawBgImage: function (marker, pointPos) {
+            var options = marker.options.icon.options;
+            if (!marker.canvas_bg_img) return;
+
+            this._context.drawImage(
+                marker.canvas_bg_img,
+                pointPos.x - options.iconBgAnchor[0] * devicePixelRatio,
+                pointPos.y - options.iconBgAnchor[1] * devicePixelRatio,
+                options.iconBgSize[0] * devicePixelRatio,
+                options.iconBgSize[1] * devicePixelRatio
             );
         },
 
@@ -298,13 +327,18 @@ function layerFactory(L) {
 
             var size = this._map.getSize();
 
+            this._canvas.style.width = size.x + "px";
+            this._canvas.style.height = size.y + "px";
             this._canvas.width = size.x * devicePixelRatio;
             this._canvas.height = size.y * devicePixelRatio;
-
+            
             this._redraw();
         },
 
         _redraw: function (clear) {
+            // console.log('redraw ')
+            // return before inited
+            if (!this._context) return;
 
             var self = this;
 
@@ -347,8 +381,8 @@ function layerFactory(L) {
                 pointPos.y *=  devicePixelRatio
 
                 var iconSize = e.data.options.icon.options.iconSize;
-                var adj_x = iconSize[0]/2;
-                var adj_y = iconSize[1]/2;
+                var adj_x = iconSize[0]/2 * devicePixelRatio;
+                var adj_y = iconSize[1]/2 * devicePixelRatio;
 
                 var newCoords = {
                     minX: (pointPos.x - adj_x),
@@ -372,11 +406,13 @@ function layerFactory(L) {
         _initCanvas: function () {
 
             this._canvas = L.DomUtil.create('canvas', 'leaflet-canvas-icon-layer leaflet-layer');
-            var originProp = L.DomUtil.testProp(['transformOrigin', 'WebkitTransformOrigin', 'msTransformOrigin']);
-            this._canvas.style[originProp] = '50% 50%';
+            // var originProp = L.DomUtil.testProp(['transformOrigin', 'WebkitTransformOrigin', 'msTransformOrigin']);
+            // this._canvas.style[originProp] = '50% 50%';
 
             var size = this._map.getSize();
-            this._canvas.style = "height:" + size.y + "px;width:" + size.x + "px;";
+            // this._canvas.style.pointerEvents = "none";
+            this._canvas.style.width = size.x + "px";
+            this._canvas.style.height = size.y + "px";
             this._canvas.width = size.x * devicePixelRatio;
             this._canvas.height = size.y * devicePixelRatio;
 
@@ -394,49 +430,175 @@ function layerFactory(L) {
             this._onHoverListeners.push(listener);
         },
 
-        _executeListeners: function (event) {
+        addOnMouseOutListener: function (listener) {
+            this._onMouseOutListeners.push(listener);
+        },
 
-            if (!this._markers) return;
+        _executeListeners: function (event) {
+            if (!this._markers) return false;
 
             var me = this;
-            var x = event.containerPoint.x;
-            var y = event.containerPoint.y;
+            var x = event.containerPoint.x * devicePixelRatio;
+            var y = event.containerPoint.y * devicePixelRatio;
+
 
             if(me._openToolTip) {
-
                 me._openToolTip.closeTooltip();
                 delete me._openToolTip;
             }
 
             var ret = this._markers.search({ minX: x, minY: y, maxX: x, maxY: y });
+            var hit = ret && ret.length > 0
 
-            if (ret && ret.length > 0) {
-
+            if (hit) {
                 me._map._container.style.cursor="pointer";
+                var marker = ret[0].data;
 
                 if (event.type==="click") {
 
-                    var hasPopup = ret[0].data.getPopup();
-                    if(hasPopup) ret[0].data.openPopup();
+                    var hasPopup = marker.getPopup();
+                    if(hasPopup) marker.openPopup();
 
-                    me._onClickListeners.forEach(function (listener) { listener(event, ret); });
+                    me._onClickListeners.forEach(function (listener) { listener(event, marker); });
                 }
 
                 if (event.type==="mousemove") {
-                    var hasTooltip = ret[0].data.getTooltip();
+                    var hasTooltip = marker.getTooltip();
+                    var riseOnHover = marker.options.riseOnHover;
                     if(hasTooltip) {
-                        me._openToolTip = ret[0].data;
-                        ret[0].data.openTooltip();
+                        me._openToolTip = marker;
+                        marker.openTooltip();
                     }
-
-                    me._onHoverListeners.forEach(function (listener) { listener(event, ret); });
+                    if (me._lastHoverID && me._lastHoverID != marker._leaflet_id) {
+                        me._onMouseOutListeners.forEach(function (listener) { listener(event) });
+                    }
+                    if (me._lastHoverID != marker._leaflet_id) { // 只触发一次
+                        me._lastHoverID = marker._leaflet_id;
+                        me._onHoverListeners.forEach(function (listener) { listener(event, marker); });
+                        if (riseOnHover) {
+                            me._riseOnHover(marker)
+                        }
+                    }
                 }
             }
             else {
-
                 me._map._container.style.cursor="";
+                if (me._lastHoverID) {
+                    me._lastHoverID = null;
+                    me._onMouseOutListeners.forEach(function (listener) { listener(event) });
+                    this._redraw(true); // 清空bgImage
+                }
             }
-        }
+
+            return hit
+        },
+
+        _hitTest: function(event) {
+            var hitTargets = [];
+            var containerPoint = this._map.mouseEventToContainerPoint(event);
+
+            if (this._markers) {
+                var x = containerPoint.x * devicePixelRatio;
+                var y = containerPoint.y * devicePixelRatio;
+                var ret = this._markers.search({ minX: x, minY: y, maxX: x, maxY: y });
+                if (ret && ret.length > 0) {
+                    hitTargets = ret;
+                }
+            }
+
+            return hitTargets;
+        },
+
+        _onClick: function (e) {
+            var targets = [];
+            if (e.type === 'click' && this._onClickListeners.length) {
+                targets = this._hitTest(e);
+            }
+
+            if (targets.length > 0) {
+                this._handleClick(e, targets)
+            } else if (this._map._renderer) {
+                // 主动触发leaflet的多边形canvas的事件监听
+                this._map._renderer._onClick(e)
+            }
+        },
+
+        _onMouseMove: function (e) {
+            var targets = [];
+            if (this._onHoverListeners.length) {
+                targets = this._hitTest(e);
+            }
+
+            if (targets.length > 0) {
+                this._handleMouseMove(e, targets);
+                return;
+            }
+            
+            // 每命中时处理一下mouseout
+            this._map._container.style.cursor="";
+            if (this._lastHoverID) {
+                this._lastHoverID = null;
+                this._onMouseOutListeners.forEach(function (listener) { listener(e) });
+                this._redraw(true); // 清空bgImage
+            }
+
+            if (this._map._renderer) {
+                // 主动触发leaflet的多边形canvas的事件监听
+                this._map._renderer._onMouseMove(e)
+            }
+            
+        },
+
+        // 这里是鼠标移出canvas容器事件
+        _handleMouseOut: function (e) {
+            if (this._map._renderer) {
+                // 主动触发leaflet的多边形canvas的事件监听
+                this._map._renderer._handleMouseOut(e)
+            }
+        },
+
+        _handleClick: function(e, targets) {
+            this._map._container.style.cursor="pointer";
+            var marker = targets[0].data;
+
+            var hasPopup = marker.getPopup();
+            if(hasPopup) marker.openPopup();
+
+            this._onClickListeners.forEach(function (listener) { listener(e, marker); });
+        },
+
+        _handleMouseMove: function(e, targets) {
+            this._map._container.style.cursor="pointer";
+            var marker = targets[0].data;
+            var hasTooltip = marker.getTooltip();
+            var riseOnHover = marker.options.riseOnHover;
+            if(hasTooltip) {
+                this._openToolTip = marker;
+                marker.openTooltip();
+            }
+            
+            if (this._lastHoverID != marker._leaflet_id) { // 只触发一次
+                if (this._lastHoverID) {
+                    this._onMouseOutListeners.forEach(function (listener) { listener(e) });
+                }
+                this._lastHoverID = marker._leaflet_id;
+                this._onHoverListeners.forEach(function (listener) { listener(e, marker); });
+                if (riseOnHover) {
+                    this._riseOnHover(marker)
+                }
+            }
+        },
+
+        _riseOnHover(marker) {
+            // 因为反复在同一个位置绘制图片会出现黑影，重绘一下清除黑影
+            this._redraw(true);
+
+            var pointPos = this._map.latLngToContainerPoint(marker.getLatLng());
+            pointPos.x *=  devicePixelRatio;
+            pointPos.y *=  devicePixelRatio;
+            this._drawBgImage(marker, pointPos);
+            this._drawImage(marker, pointPos);
+        },
     });
 
     L.canvasIconLayer = function (options) {
